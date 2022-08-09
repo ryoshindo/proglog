@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile
+    command: air -c .air.toml
+    ports:
+      - 8080:8080
+    volumes:
+      - ./:/go/src/github.com/ryoshindo/proglog
