@@ -6,6 +6,8 @@ services:
       context: .
       dockerfile: ./docker/Dockerfile
     command: air -c .air.toml
+    environment:
+      CONFIG_DIR: /go/src/github.com/ryoshindo/proglog/.proglog
     ports:
       - 8080:8080
     volumes:
