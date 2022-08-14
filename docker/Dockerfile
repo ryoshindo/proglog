@@ -1,15 +1,14 @@
-FROM golang:1.18
-
-RUN apt-get -y update \
-    && apt-get -y install protobuf-compiler
-
+FROM golang:1.18-alpine AS build
 WORKDIR /go/src/github.com/ryoshindo/proglog
+COPY . .
+RUN CGO_ENABLED=0 go build -o /go/bin/proglog ./cmd/proglog
 
-COPY go.mod go.sum ./
+RUN GRPC_HEALTH_PROBE_VERSION=v0.4.8 && \
+    wget -qO/go/bin/grpc_health_probe \
+    https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-arm64 && \
+    chmod +x /go/bin/grpc_health_probe
 
-RUN go install \
-    github.com/cosmtrek/air \
-    google.golang.org/protobuf/cmd/protoc-gen-go \
-    google.golang.org/grpc/cmd/protoc-gen-go-grpc \
-    github.com/cloudflare/cfssl/cmd/cfssl \
-    github.com/cloudflare/cfssl/cmd/cfssljson
+FROM alpine
+COPY --from=build /go/bin/proglog /bin/proglog
+COPY --from=build /go/bin/grpc_health_probe /bin/grpc_health_probe
+ENTRYPOINT [ "/bin/proglog" ]
