@@ -8,14 +8,16 @@ import (
 	"testing"
 	"time"
 
-	api "github.com/ryoshindo/proglog/api/v1"
-	"github.com/ryoshindo/proglog/internal/agent"
-	"github.com/ryoshindo/proglog/internal/config"
 	"github.com/stretchr/testify/require"
 	"github.com/travisjeffery/go-dynaport"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
+
+	api "github.com/ryoshindo/proglog/api/v1"
+	"github.com/ryoshindo/proglog/internal/agent"
+	"github.com/ryoshindo/proglog/internal/config"
+	"github.com/ryoshindo/proglog/internal/loadbalance"
 )
 
 func TestAgent(t *testing.T) {
@@ -48,7 +50,10 @@ func TestAgent(t *testing.T) {
 
 		var startJoinAddrs []string
 		if i != 0 {
-			startJoinAddrs = append(startJoinAddrs, agents[0].Config.BindAddr)
+			startJoinAddrs = append(
+				startJoinAddrs,
+				agents[0].Config.BindAddr,
+			)
 		}
 
 		agent, err := agent.New(agent.Config{
@@ -67,12 +72,13 @@ func TestAgent(t *testing.T) {
 
 		agents = append(agents, agent)
 	}
-
 	defer func() {
 		for _, agent := range agents {
 			err := agent.Shutdown()
 			require.NoError(t, err)
-			require.NoError(t, os.RemoveAll(agent.Config.DataDir))
+			require.NoError(t,
+				os.RemoveAll(agent.Config.DataDir),
+			)
 		}
 	}()
 	time.Sleep(3 * time.Second)
@@ -88,6 +94,9 @@ func TestAgent(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	// レプリケーションが完了するまで待つ
+	time.Sleep(3 * time.Second)
+
 	consumeResponse, err := leaderClient.Consume(
 		context.Background(),
 		&api.ConsumeRequest{
@@ -96,8 +105,6 @@ func TestAgent(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, consumeResponse.Record.Value, []byte("foo"))
-
-	time.Sleep(3 * time.Second)
 
 	followerClient := client(t, agents[1], peerTLSConfig)
 	consumeResponse, err = followerClient.Consume(
@@ -132,7 +139,11 @@ func client(
 	rpcAddr, err := agent.Config.RPCAddr()
 	require.NoError(t, err)
 
-	conn, err := grpc.Dial(rpcAddr, opts...)
+	conn, err := grpc.Dial(fmt.Sprintf(
+		"%s:///%s",
+		loadbalance.Name,
+		rpcAddr,
+	), opts...) //
 	require.NoError(t, err)
 
 	client := api.NewLogClient(conn)

@@ -10,18 +10,19 @@ import (
 	"time"
 
 	"github.com/hashicorp/raft"
-	"github.com/ryoshindo/proglog/internal/auth"
-	"github.com/ryoshindo/proglog/internal/discovery"
-	"github.com/ryoshindo/proglog/internal/log"
-	"github.com/ryoshindo/proglog/internal/server"
 	"github.com/soheilhy/cmux"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+
+	"github.com/ryoshindo/proglog/internal/auth"
+	"github.com/ryoshindo/proglog/internal/discovery"
+	"github.com/ryoshindo/proglog/internal/log"
+	"github.com/ryoshindo/proglog/internal/server"
 )
 
 type Agent struct {
-	Config
+	Config Config
 
 	mux        cmux.CMux
 	log        *log.DistributedLog
@@ -75,22 +76,25 @@ func New(config Config) (*Agent, error) {
 	return a, nil
 }
 
+func (a *Agent) setupMux() error {
+	rpcAddr := fmt.Sprintf(
+		":%d",
+		a.Config.RPCPort,
+	)
+	ln, err := net.Listen("tcp", rpcAddr)
+	if err != nil {
+		return err
+	}
+	a.mux = cmux.New(ln)
+	return nil
+}
+
 func (a *Agent) setupLogger() error {
 	logger, err := zap.NewDevelopment()
 	if err != nil {
 		return err
 	}
 	zap.ReplaceGlobals(logger)
-	return nil
-}
-
-func (a *Agent) setupMux() error {
-	rpcAddr := fmt.Sprintf(":%d", a.Config.RPCPort)
-	ln, err := net.Listen("tcp", rpcAddr)
-	if err != nil {
-		return err
-	}
-	a.mux = cmux.New(ln)
 	return nil
 }
 
@@ -111,6 +115,7 @@ func (a *Agent) setupLog() error {
 	)
 	logConfig.Raft.LocalID = raft.ServerID(a.Config.NodeName)
 	logConfig.Raft.Bootstrap = a.Config.Bootstrap
+	logConfig.Raft.CommitTimeout = 1000 * time.Millisecond
 	var err error
 	a.log, err = log.NewDistributedLog(
 		a.Config.DataDir,
@@ -126,17 +131,20 @@ func (a *Agent) setupLog() error {
 }
 
 func (a *Agent) setupServer() error {
-	authorizer := auth.New(a.Config.ACLModelFile, a.Config.ACLPolicyFile)
+	authorizer := auth.New(
+		a.Config.ACLModelFile,
+		a.Config.ACLPolicyFile,
+	)
 	serverConfig := &server.Config{
-		CommitLog:  a.log,
-		Authorizer: authorizer,
+		CommitLog:   a.log,
+		Authorizer:  authorizer,
+		GetServerer: a.log,
 	}
 	var opts []grpc.ServerOption
 	if a.Config.ServerTLSConfig != nil {
 		creds := credentials.NewTLS(a.Config.ServerTLSConfig)
 		opts = append(opts, grpc.Creds(creds))
 	}
-
 	var err error
 	a.server, err = server.NewGRPCServer(serverConfig, opts...)
 	if err != nil {
@@ -148,7 +156,6 @@ func (a *Agent) setupServer() error {
 			_ = a.Shutdown()
 		}
 	}()
-
 	return err
 }
 
